@@ -9,5 +9,5 @@ name = "pyaga8"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = "0.23.3"
+pyo3 = "0.24.1"
 aga8 = "0.5"
