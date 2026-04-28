@@ -21,8 +21,32 @@
 // SOFTWARE.
 
 
-use aga8::*;
+use aga8::composition::CompositionError;
+use aga8::{composition, detail, gerg2008, DensityError};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+
+/// Convert Rust-side composition errors into ordinary Python exceptions.
+fn composition_error_to_py_err(err: CompositionError) -> PyErr {
+    match err {
+        CompositionError::Empty => PyValueError::new_err("composition cannot be empty"),
+        CompositionError::BadSum => {
+            PyValueError::new_err("composition sum must be within 0.01 of 1.0")
+        }
+        CompositionError::Ok => PyRuntimeError::new_err("unexpected composition error state"),
+    }
+}
+
+/// Convert Rust-side density errors into ordinary Python exceptions.
+fn density_error_to_py_err(err: DensityError) -> PyErr {
+    match err {
+        DensityError::PressureTooLow => PyValueError::new_err("pressure is too low for density calculation"),
+        DensityError::IterationFail => {
+            PyRuntimeError::new_err("density calculation failed to converge")
+        }
+        DensityError::Ok => PyRuntimeError::new_err("unexpected density error state"),
+    }
+}
 
 #[pyclass]
 struct Gerg2008 {
@@ -147,9 +171,8 @@ impl Gerg2008 {
     }
 
     // Functions
-    // TODO: Proper error handling
-    fn calc_density(&mut self, flag: i32) {
-        self.inner.density(flag).unwrap();
+    fn calc_density(&mut self, flag: i32) -> PyResult<()> {
+        self.inner.density(flag).map_err(density_error_to_py_err)
     }
 
     fn calc_pressure(&mut self) -> f64 {
@@ -164,8 +187,10 @@ impl Gerg2008 {
         self.inner.molar_mass();
     }
 
-    fn set_composition(&mut self, comp: &Composition) {
-        self.inner.set_composition(&comp.inner).unwrap();
+    fn set_composition(&mut self, comp: &Composition) -> PyResult<()> {
+        self.inner
+            .set_composition(&comp.inner)
+            .map_err(composition_error_to_py_err)
     }
 }
 
@@ -292,9 +317,8 @@ impl Detail {
     }
 
     // Functions
-    // TODO: Proper error handling
-    fn calc_density(&mut self) {
-        self.inner.density().unwrap();
+    fn calc_density(&mut self) -> PyResult<()> {
+        self.inner.density().map_err(density_error_to_py_err)
     }
 
     fn calc_pressure(&mut self) -> f64 {
@@ -309,8 +333,10 @@ impl Detail {
         self.inner.molar_mass();
     }
 
-    fn set_composition(&mut self, comp: &Composition) {
-        self.inner.set_composition(&comp.inner).unwrap();
+    fn set_composition(&mut self, comp: &Composition) -> PyResult<()> {
+        self.inner
+            .set_composition(&comp.inner)
+            .map_err(composition_error_to_py_err)
     }
 }
 
