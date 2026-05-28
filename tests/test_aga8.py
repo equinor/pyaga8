@@ -56,13 +56,12 @@ FULL_COMPOSITION.argon = 0.001
 def test_gerg2008_set_composition():
     gerg.set_composition(FULL_COMPOSITION)
 
-    # TODO: Map Rust Errors Empty and BadSum to python Exceptions
     invalid = pyaga8.Composition()
-    with raises(BaseException):
+    with raises(ValueError, match='composition cannot be empty'):
         gerg.set_composition(invalid)
 
     invalid.ethane = 0.3
-    with raises(BaseException):
+    with raises(ValueError, match='composition sum must be within 0.01 of 1.0'):
         gerg.set_composition(invalid)
 
 def test_gerg2008_calc_density():
@@ -72,6 +71,24 @@ def test_gerg2008_calc_density():
 
     gerg.calc_density(0)
     assert gerg.d == approx(12.798_286_260_820_62)
+
+
+def test_gerg2008_calc_density_low_pressure():
+    gerg.set_composition(FULL_COMPOSITION)
+    gerg.temperature = 400.0
+    gerg.pressure = 0.0
+
+    with raises(RuntimeError, match='density calculation failed to converge'):
+        gerg.calc_density(0)
+
+
+def test_gerg2008_calc_density_rejects_non_integer_flag():
+    gerg.set_composition(FULL_COMPOSITION)
+    gerg.temperature = 400.0
+    gerg.pressure = 50_000.0
+
+    with raises(TypeError):
+        gerg.calc_density('spam')
 
 def test_gerg2008_calc_pressure():
     gerg.set_composition(FULL_COMPOSITION)
@@ -93,6 +110,7 @@ def test_gerg2008_calc_properties():
     assert gerg.z == approx(1.174_690_666_383_717)
     assert gerg.dp_dd == approx(7_000.694_030_193_327)
     assert gerg.d2p_dd2 == approx(1_129.526_655_214_841)
+    assert gerg.d2p_dtd == approx(34.309_428_436_792_17)
     assert gerg.dp_dt == approx(235.983_229_259_309_6)
     assert gerg.u == approx(-2_746.492_901_212_53)
     assert gerg.h == approx(1_160.280_160_510_973)
@@ -135,13 +153,12 @@ def test_gerg2008_set_d():
 def test_detail_set_composition():
     detail.set_composition(FULL_COMPOSITION)
 
-    # TODO: Map Rust Errors Empty and BadSum to python Exceptions
     invalid = pyaga8.Composition()
-    with raises(BaseException):
+    with raises(ValueError, match='composition cannot be empty'):
         detail.set_composition(invalid)
 
     invalid.ethane = 0.3
-    with raises(BaseException):
+    with raises(ValueError, match='composition sum must be within 0.01 of 1.0'):
         detail.set_composition(invalid)
 
 def test_detail2008_calc_density():
@@ -151,6 +168,15 @@ def test_detail2008_calc_density():
 
     detail.calc_density()
     assert detail.d == approx(12.807_924_036_488_01)
+
+
+def test_detail2008_calc_density_low_pressure():
+    detail.set_composition(FULL_COMPOSITION)
+    detail.temperature = 400.0
+    detail.pressure = 0.0
+
+    with raises(ValueError, match='pressure is too low for density calculation'):
+        detail.calc_density()
 
 def test_detail2008_calc_pressure():
     detail.set_composition(FULL_COMPOSITION)
@@ -172,6 +198,7 @@ def test_detail2008_calc_properties():
     assert detail.z == approx(1.173_801_364_147_326)
     assert detail.dp_dd == approx(6_971.387_690_924_09)
     assert detail.d2p_dd2 == approx(1_118.803_636_639_52)
+    assert detail.d2p_dtd == approx(0.0)
     assert detail.dp_dt == approx(235.664_149_306_821_2)
     assert detail.u == approx(-2_739.134_175_817_231)
     assert detail.h == approx(1_164.699_096_269_404)
