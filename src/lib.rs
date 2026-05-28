@@ -44,7 +44,7 @@ fn density_error_to_py_err(err: DensityError) -> PyErr {
         DensityError::IterationFail => {
             PyRuntimeError::new_err("density calculation failed to converge")
         }
-        DensityError::Ok => PyRuntimeError::new_err("unexpected density error state"),
+        DensityError::Ok => PyAssertionError::new_err("Not an error - should never happen"),
     }
 }
 
