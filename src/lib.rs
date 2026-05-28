@@ -33,7 +33,7 @@ fn composition_error_to_py_err(err: CompositionError) -> PyErr {
         CompositionError::BadSum => {
             PyValueError::new_err("composition sum must be within 0.01 of 1.0")
         }
-        CompositionError::Ok => PyRuntimeError::new_err("unexpected composition error state"),
+        CompositionError::Ok => PyAssertionError::new_err("Not an error - should never happen"),
     }
 }
 
