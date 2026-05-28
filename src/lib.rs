@@ -23,7 +23,7 @@
 
 use aga8::composition::CompositionError;
 use aga8::{composition, detail, gerg2008, DensityError};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyValueError, PyAssertionError};
 use pyo3::prelude::*;
 
 /// Convert Rust-side composition errors into ordinary Python exceptions.
