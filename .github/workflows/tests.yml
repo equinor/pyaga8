@@ -209,7 +209,7 @@ jobs:
           -v "$GITHUB_WORKSPACE/tests:/src-tests:ro" \
           quay.io/pypa/manylinux2014_x86_64 \
           bash -euo pipefail -c '
-            ldd --version | head -n 1
+            ldd --version | sed -n 1p
             for v in $PYTHON_VERSIONS; do
               tag="cp${v/./}"
               py="/opt/python/${tag}-${tag}/bin/python"

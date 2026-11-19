@@ -18,8 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PYTHON_TAGS = ["cp310", "cp311", "cp312", "cp313", "cp314"]
 
 PLATFORM_TAGS = [
-    "manylinux_2_17_x86_64.manylinux2014_x86_64",
-    "manylinux_2_17_aarch64.manylinux2014_aarch64",
+    "manylinux2014_x86_64.manylinux_2_17_x86_64",
+    "manylinux2014_aarch64.manylinux_2_17_aarch64",
     "win_amd64",
     "macosx_11_0_arm64",
 ]
