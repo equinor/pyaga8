@@ -61,6 +61,8 @@ coverage.xml
 
 # Sphinx documentation
 docs/_build/
+docs/_autosummary/
+docs/_examples/
 
 # PyCharm
 .idea/
