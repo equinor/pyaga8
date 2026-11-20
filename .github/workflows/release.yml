@@ -228,7 +228,8 @@ jobs:
 
         project = os.environ["PROJECT"]
         version = os.environ["VERSION"]
-        repository = os.environ["REPO"]
+        # GitHub owner/repository names are case-insensitive.
+        repository = os.environ["REPO"].lower()
         attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
 
         manifest = {}
@@ -262,11 +263,15 @@ jobs:
                     bundle.get("publisher") or {} for bundle in provenance.get("attestation_bundles", [])
                 ]
                 if not any(
-                    p.get("kind") == "GitHub" and p.get("repository") == repository and p.get("workflow") == "release.yml"
+                    p.get("kind") == "GitHub"
+                    and str(p.get("repository", "")).lower() == repository
+                    and p.get("workflow") == "release.yml"
+                    and p.get("environment") == "pypi"
                     for p in publishers
                 ):
-                    raise SystemExit(f"::error::{name} on PyPI has no provenance from {repository} release.yml.")
-                print(f"  {name}: same sha256 as SHA256SUMS, provenance from {repository} release.yml")
+                    raise SystemExit(f"::error::{name} on PyPI has no provenance from {repository} release.yml "
+                                     f"(environment pypi): {publishers}")
+                print(f"  {name}: same sha256 as SHA256SUMS, provenance from {repository} release.yml (environment pypi)")
             skip_existing = "true"
 
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
