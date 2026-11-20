@@ -277,8 +277,22 @@ jobs:
 
   collect:
     needs: [lint, test, test-wheels, test-manylinux2014, test-sdist]
+    # Runs, and fails, also when a job it needs has failed: a skipped job would count as passed
+    # where "collect" is a required status check.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+    - name: Check that every job it needs has passed
+      env:
+        RESULTS: ${{ join(needs.*.result, ' ') }}
+      run: |
+        echo "Results: ${RESULTS}"
+        for result in ${RESULTS}; do
+          if [ "${result}" != "success" ]; then
+            echo "::error::A job that collect needs did not succeed (${RESULTS})."
+            exit 1
+          fi
+        done
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Set up Python
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
