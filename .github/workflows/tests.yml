@@ -1,6 +1,7 @@
 # Lint, build and test pyaga8.
 #
-# - lint:          cargo clippy on the locked dependency set.
+# - lint:          cargo clippy on the locked dependency set, and a check that no tracked file
+#                  contains a path from a developer's machine (tools/check_no_local_paths.py).
 # - test:          build the extension in place (maturin develop) and run pytest, CPython 3.10-3.14.
 # - wheels:        build the release wheels once per platform with maturin (manylinux2014 for Linux).
 # - test-wheels:   install each wheel in a clean virtual environment on its own runner and run a
@@ -36,6 +37,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: No local paths in tracked files
+      # Stored outputs and tracebacks can carry paths from a developer's machine; this repository
+      # is public. See tools/check_no_local_paths.py. Uses the runner's own Python 3.
+      run: |
+        python3 tools/check_no_local_paths.py
     - name: Clippy
       run: |
         rustup component add clippy
