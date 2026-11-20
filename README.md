@@ -28,6 +28,12 @@ Joule-Thomson coefficient in K/kPa. Compositions are mole fractions. The docstri
 pip install pyaga8
 ```
 
+Wheels are published for CPython 3.10-3.14 on Linux x86_64 and aarch64 (manylinux2014),
+Windows x64 and macOS arm64. The installed version is `pyaga8.__version__`. Each release has a
+git tag and a [GitHub release](https://github.com/equinor/pyaga8/releases) with the same version,
+for example `0.2.0`; how releases are made is described in
+[docs/releasing.md](https://github.com/equinor/pyaga8/blob/main/docs/releasing.md).
+
 ## Minimal usage
 
 ```python

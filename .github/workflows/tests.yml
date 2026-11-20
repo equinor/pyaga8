@@ -8,9 +8,10 @@
 # - test-manylinux2014: run the x86_64 wheels inside the manylinux2014 image (glibc 2.17).
 # - sdist:         build the source distribution and test an install from it.
 # - collect:       check that exactly the expected 20 wheels + 1 sdist exist, run twine check and
-#                  upload them as the artifact "dist". release.yml uploads exactly these files.
+#                  upload them as the artifact "dist".
 #
-# Called by release.yml (workflow_call), so a release runs the same checks.
+# Called by release.yml (workflow_call), so a release runs the same checks; release.yml then
+# publishes exactly the files of the artifact "dist" of that run.
 
 name: Tests
 
