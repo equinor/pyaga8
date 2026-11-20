@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -62,6 +61,8 @@ coverage.xml
 
 # Sphinx documentation
 docs/_build/
+docs/_autosummary/
+docs/_examples/
 
 # PyCharm
 .idea/

@@ -6,11 +6,17 @@ build-backend = "maturin"
 name = "pyaga8"
 description = "Python package for calculating gas properties using the AGA8 equations GERG-2008 and DETAIL"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
 
@@ -20,13 +26,30 @@ authors = [
     { name = "Christian Hågenvik" }
 ]
 
-license = "MIT License"
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["AGA8", "gas properties", "GERG-2008", "DETAIL"]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+]
+# Builds the documentation site; see docs/conf.py. The extension module must be built and
+# installed first (maturin develop or pip install .), because the API pages import it.
+docs = [
+    "sphinx>=7.3",
+    "myst-parser>=4.0",
+    "furo>=2024.1.29",
+]
 
 [project.urls]
 homepage = "https://github.com/equinor/pyaga8"
+Documentation = "https://equinor.github.io/pyaga8/"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
 long_description = "README.md"
 long_description_content_type = "text/markdown"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

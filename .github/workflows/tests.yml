@@ -1,0 +1,321 @@
+# Lint, build and test pyaga8.
+#
+# - lint:          cargo clippy on the locked dependency set.
+# - test:          build the extension in place (maturin develop) and run pytest, CPython 3.10-3.14.
+# - wheels:        build the release wheels once per platform with maturin (manylinux2014 for Linux).
+# - test-wheels:   install each wheel in a clean virtual environment on its own runner and run a
+#                  copy of tests/ from outside the checkout.
+# - test-manylinux2014: run the x86_64 wheels inside the manylinux2014 image (glibc 2.17).
+# - sdist:         build the source distribution and test an install from it.
+# - collect:       check that exactly the expected 20 wheels + 1 sdist exist, run twine check and
+#                  upload them as the artifact "dist".
+#
+# Called by release.yml (workflow_call), so a release runs the same checks; release.yml then
+# publishes exactly the files of the artifact "dist" of that run.
+
+name: Tests
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSIONS: "3.10 3.11 3.12 3.13 3.14"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Clippy
+      run: |
+        rustup component add clippy
+        cargo clippy --locked
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Build and install the extension
+      run: |
+        python -m venv .venv
+        . .venv/bin/activate
+        python -m pip install --upgrade pip
+        python -m pip install maturin pytest flake8
+        maturin develop --locked
+    - name: Lint tests and tools with flake8
+      run: |
+        . .venv/bin/activate
+        # Stop the build on Python syntax errors or undefined names.
+        flake8 tests/ tools/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 tests/ tools/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: Test with pytest
+      run: |
+        . .venv/bin/activate
+        pytest -v
+    - name: Check that pyaga8.pyi matches the docstrings
+      run: |
+        . .venv/bin/activate
+        python tools/generate_stub.py --check
+
+  wheels:
+    name: wheels (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - platform: linux-x86_64
+          runner: ubuntu-latest
+          target: x86_64
+        - platform: linux-aarch64
+          runner: ubuntu-24.04-arm
+          target: aarch64
+        - platform: windows-x64
+          runner: windows-latest
+          target: x64
+        - platform: macos-arm64
+          runner: macos-latest
+          target: aarch64
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    # On Windows and macOS the wheels are built against interpreters installed on the runner.
+    # On Linux they are built inside the manylinux2014 container, which has its own interpreters.
+    - id: py310
+      if: runner.os != 'Linux'
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.10"
+    - id: py311
+      if: runner.os != 'Linux'
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.11"
+    - id: py312
+      if: runner.os != 'Linux'
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.12"
+    - id: py313
+      if: runner.os != 'Linux'
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.13"
+    - id: py314
+      if: runner.os != 'Linux'
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.14"
+    - name: Select interpreters
+      id: interpreters
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          echo "list=python3.10 python3.11 python3.12 python3.13 python3.14" >> "$GITHUB_OUTPUT"
+        else
+          echo "list=${{ steps.py310.outputs.python-path }} ${{ steps.py311.outputs.python-path }} ${{ steps.py312.outputs.python-path }} ${{ steps.py313.outputs.python-path }} ${{ steps.py314.outputs.python-path }}" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Build wheels
+      uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+      with:
+        target: ${{ matrix.target }}
+        manylinux: "2014"
+        args: --release --locked --out dist --interpreter ${{ steps.interpreters.outputs.list }}
+    - name: Upload wheels
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: wheels-${{ matrix.platform }}
+        path: dist/*.whl
+        if-no-files-found: error
+
+  test-wheels:
+    name: test wheel (${{ matrix.platform }}, ${{ matrix.python-version }})
+    needs: wheels
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-x86_64, linux-aarch64, windows-x64, macos-arm64]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+        - platform: linux-x86_64
+          runner: ubuntu-latest
+        - platform: linux-aarch64
+          runner: ubuntu-24.04-arm
+        - platform: windows-x64
+          runner: windows-latest
+        - platform: macos-arm64
+          runner: macos-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: ${{ matrix.python-version }}
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: wheels-${{ matrix.platform }}
+        path: ${{ runner.temp }}/wheels
+    - name: Install the wheel in a clean virtual environment and run the tests
+      shell: bash
+      env:
+        PYAGA8_EXPECT_INSTALLED: "1"
+      run: |
+        set -euo pipefail
+        cp -r tests "$RUNNER_TEMP/tests"
+        python -m venv "$RUNNER_TEMP/venv"
+        if [ "$RUNNER_OS" = "Windows" ]; then VENV_PY="$RUNNER_TEMP/venv/Scripts/python.exe"; else VENV_PY="$RUNNER_TEMP/venv/bin/python"; fi
+        "$VENV_PY" -m pip install --upgrade pip
+        "$VENV_PY" -m pip install --only-binary=:all: --no-index --find-links "$RUNNER_TEMP/wheels" pyaga8
+        "$VENV_PY" -m pip install pytest
+        cd "$RUNNER_TEMP"
+        "$VENV_PY" -c "import pyaga8; print(pyaga8.__version__, pyaga8.__file__)"
+        "$VENV_PY" -m pytest --import-mode=importlib -p no:cacheprovider -v tests
+
+  test-manylinux2014:
+    name: test wheels in manylinux2014 (glibc 2.17)
+    needs: wheels
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: wheels-linux-x86_64
+        path: ${{ runner.temp }}/wheels
+    # The JavaScript actions cannot run inside this old image, so the container is started here
+    # with the wheels and a copy of tests/ mounted read-only.
+    - name: Install and test each wheel inside quay.io/pypa/manylinux2014_x86_64
+      run: |
+        docker run --rm \
+          -e PYAGA8_EXPECT_INSTALLED=1 \
+          -e PYTHON_VERSIONS="$PYTHON_VERSIONS" \
+          -v "$RUNNER_TEMP/wheels:/wheels:ro" \
+          -v "$GITHUB_WORKSPACE/tests:/src-tests:ro" \
+          quay.io/pypa/manylinux2014_x86_64 \
+          bash -euo pipefail -c '
+            ldd --version | sed -n 1p
+            for v in $PYTHON_VERSIONS; do
+              tag="cp${v/./}"
+              py="/opt/python/${tag}-${tag}/bin/python"
+              echo "=== CPython $v ($py)"
+              "$py" -m venv "/root/venv-$v"
+              "/root/venv-$v/bin/python" -m pip install --quiet --upgrade pip
+              "/root/venv-$v/bin/python" -m pip install --only-binary=:all: --no-index --find-links /wheels pyaga8
+              "/root/venv-$v/bin/python" -m pip install --quiet pytest
+              rm -rf /root/run && mkdir /root/run && cp -r /src-tests /root/run/tests
+              cd /root/run
+              "/root/venv-$v/bin/python" -m pytest --import-mode=importlib -p no:cacheprovider -q tests
+              cd /
+            done
+          '
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Build sdist
+      uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+      with:
+        command: sdist
+        args: --out dist
+    - name: Upload sdist
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: sdist
+        path: dist/*.tar.gz
+        if-no-files-found: error
+
+  test-sdist:
+    needs: sdist
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.13"
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: sdist
+        path: ${{ runner.temp }}/sdist
+    - name: Install from the unpacked sdist (no .git) and run the tests
+      env:
+        PYAGA8_EXPECT_INSTALLED: "1"
+        # Build the extension from the sdist with the Cargo.lock it contains.
+        MATURIN_PEP517_ARGS: "--locked"
+      run: |
+        set -euo pipefail
+        cp -r tests "$RUNNER_TEMP/tests"
+        mkdir "$RUNNER_TEMP/unpacked"
+        tar -xzf "$RUNNER_TEMP"/sdist/*.tar.gz -C "$RUNNER_TEMP/unpacked"
+        src=$(echo "$RUNNER_TEMP"/unpacked/pyaga8-*)
+        test ! -e "$src/.git"
+        test -f "$src/Cargo.lock"
+        python -m venv "$RUNNER_TEMP/venv"
+        "$RUNNER_TEMP/venv/bin/python" -m pip install --upgrade pip
+        "$RUNNER_TEMP/venv/bin/python" -m pip install "$src"
+        "$RUNNER_TEMP/venv/bin/python" -m pip install pytest
+        cd "$RUNNER_TEMP"
+        "$RUNNER_TEMP/venv/bin/python" -m pytest --import-mode=importlib -p no:cacheprovider -v tests
+
+  collect:
+    needs: [lint, test, test-wheels, test-manylinux2014, test-sdist]
+    # Runs, and fails, also when a job it needs has failed: a skipped job would count as passed
+    # where "collect" is a required status check.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check that every job it needs has passed
+      env:
+        RESULTS: ${{ join(needs.*.result, ' ') }}
+      run: |
+        echo "Results: ${RESULTS}"
+        for result in ${RESULTS}; do
+          if [ "${result}" != "success" ]; then
+            echo "::error::A job that collect needs did not succeed (${RESULTS})."
+            exit 1
+          fi
+        done
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.13"
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: wheels-*
+        path: dist
+        merge-multiple: true
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: sdist
+        path: dist
+    - name: Check the file names against the expected manifest
+      run: python tools/check_dist.py dist
+    - name: twine check
+      run: |
+        python -m pip install twine
+        twine check --strict dist/*
+    - name: Upload the tested distribution files
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: dist
+        path: dist/*
+        if-no-files-found: error

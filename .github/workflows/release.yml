@@ -1,109 +1,362 @@
+# Releases pyaga8: a git tag MAJOR.MINOR.PATCH, the files on PyPI and a GitHub release.
+#
+# Started by hand only - Actions -> Release -> Run workflow, on branch main. Nothing is released by
+# merging, pushing or creating a tag or release by hand. See docs/releasing.md.
+#
+# The version is the one in Cargo.toml (maturin takes the package version from there). Bump it,
+# and Cargo.lock, in a pull request before running this workflow.
+#
+# All jobs work on the one commit the run was started on (github.sha):
+#   1. prepare        - the run is on main; the Cargo.toml version is MAJOR.MINOR.PATCH and higher
+#                       than every existing release tag (tools/release_check.py); the tag does not
+#                       exist; PyPI has no release of that version.
+#   2. test           - the full test workflow tests.yml, called directly. It builds the 20 wheels
+#                       and the sdist once, installs and tests every one of them in clean virtual
+#                       environments, checks the file list and runs twine check (artifact "dist").
+#   3. build          - takes exactly those tested files, checks they carry the release version,
+#                       writes SHA256SUMS and stores the artifacts "release-dist" and
+#                       "release-manifest".
+#   4. publish        - environment "pypi" (the only approval): checks the files against
+#                       SHA256SUMS and what PyPI already has, creates the lightweight tag at
+#                       github.sha, uploads the files to PyPI with Trusted Publishing (OIDC, no
+#                       token) and checks that PyPI holds exactly these files.
+#   5. github-release - creates the GitHub release with the same files attached.
+#
+# Recovery: use "Re-run failed jobs" on this run. Never start a new run for a version that already
+# has files on PyPI, and never move or delete a published tag.
+
 name: Release
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
-  actions: write
-    
+
+# One release at a time, and never cancel a release that is already running.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  PROJECT: pyaga8
+
 jobs:
-  validate:
+  prepare:
     runs-on: ubuntu-latest
-
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Validate version match
+    - name: Only release from main
+      if: github.ref != 'refs/heads/main'
       run: |
-        CARGO_VERSION=$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['package']['version'])")
-        RELEASE_VERSION=${{ github.event.release.tag_name }}
-        RELEASE_VERSION=${RELEASE_VERSION#v}
-        
-        echo "Cargo.toml version: $CARGO_VERSION"
-        echo "GitHub release version: $RELEASE_VERSION"
-        
-        if [ "$CARGO_VERSION" != "$RELEASE_VERSION" ]; then
-          echo "❌ ERROR: Version mismatch!"
-          echo "Cargo.toml version ($CARGO_VERSION) does not match GitHub release tag ($RELEASE_VERSION)"
+        echo "::error::Releases are made from main only. This run is on ${GITHUB_REF}."
+        exit 1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+    - name: Set up Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.13"
+    - name: Check the Cargo.toml version against the existing tags
+      id: version
+      run: |
+        set -euo pipefail
+        version=$(git tag --list | python tools/release_check.py --cargo-toml Cargo.toml)
+        if git rev-parse --quiet --verify "refs/tags/${version}" > /dev/null; then
+          echo "::error::Tag ${version} already exists."
           exit 1
         fi
-        echo "✓ Version check passed!"
-
-  build-and-test:
-    runs-on: ${{ matrix.os }}
-    needs: validate
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-    - name: Install maturin
-      run: pip install maturin
-    - name: Build the package
-      run: maturin build --release
-    - name: Upload wheel artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: dist-${{ matrix.os }}-${{ matrix.python-version }}
-        path: target/wheels/*.whl
-
-  upload-source:
-    runs-on: ubuntu-latest
-    needs: build-and-test
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v3
-      with:
-        python-version: "3.9"
-    - name: Install Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-    - name: Install maturin
-      run: pip install maturin
-    - name: Create source distribution
-      run: maturin sdist
-    - name: Upload source distribution
-      uses: actions/upload-artifact@v4
-      with:
-        name: dist-source-ubuntu-latest-3.9
-        path: target/wheels/*.tar.gz
-
-  publish-to-pypi:
-    runs-on: ubuntu-latest
-    needs: [build-and-test, upload-source]
-    steps:
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        pattern: dist-*
-        path: dist
-
-    - name: Publish to PyPI
+        echo "version=${version}" >> "${GITHUB_OUTPUT}"
+        echo "Release **${version}** from commit \`${GITHUB_SHA}\`" >> "${GITHUB_STEP_SUMMARY}"
+    - name: Check that PyPI has no release of this version
       env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        VERSION: ${{ steps.version.outputs.version }}
       run: |
-        pip install twine==6.0.1
-        ls -R -l *
-        twine upload dist/dist-*/*.whl dist/dist-*/*.tar.gz
+        set -euo pipefail
+        status=$(curl --silent --show-error --retry 3 --output /dev/null --write-out '%{http_code}' \
+          "https://pypi.org/pypi/${PROJECT}/${VERSION}/json")
+        if [ "${status}" != "404" ]; then
+          echo "::error::Expected HTTP 404 from PyPI for ${PROJECT} ${VERSION}, got ${status}. Is the version already on PyPI?"
+          exit 1
+        fi
+
+  test:
+    needs: prepare
+    uses: ./.github/workflows/tests.yml
+
+  build:
+    needs: [prepare, test]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.13"
+    - name: Fetch the files tested in this run
+      # Uploaded by the job "collect" of tests.yml above: the 20 wheels and the sdist that were
+      # installed and tested there. Nothing is rebuilt, so exactly the tested files are released.
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: dist
+        path: dist
+    - name: Check the files carry the release version
+      run: |
+        set -euo pipefail
+        cargo_version=$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['package']['version'])")
+        if [ "${cargo_version}" != "${VERSION}" ]; then
+          echo "::error::Cargo.toml has ${cargo_version}, the release is ${VERSION}."
+          exit 1
+        fi
+        python tools/check_dist.py dist
+    - name: twine check
+      run: |
+        python -m pip install twine
+        twine check --strict dist/*
+    - name: Write SHA256SUMS
+      run: |
+        set -euo pipefail
+        mkdir manifest
+        (cd dist && sha256sum -- * > ../manifest/SHA256SUMS)
+        cat manifest/SHA256SUMS
+        test "$(wc -l < manifest/SHA256SUMS)" -eq 21
+    - name: Keep the distribution files
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: release-dist
+        path: dist/*
+        if-no-files-found: error
+        retention-days: 90
+        overwrite: true
+    - name: Keep the manifest
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: release-manifest
+        path: manifest/SHA256SUMS
+        if-no-files-found: error
+        retention-days: 90
+        overwrite: true
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    environment: pypi
+    # contents: write to create the tag, id-token: write for Trusted Publishing. No checkout and no
+    # project code in this job: only artifacts, gh api and pypa/gh-action-pypi-publish.
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      REPO: ${{ github.repository }}
+    steps:
+    - name: Fetch the distribution files
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: release-dist
+        path: dist
+    - name: Fetch the manifest
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: release-manifest
+        path: manifest
+    - name: Check the files against the manifest
+      run: |
+        set -euo pipefail
+        diff <(ls -1 dist | LC_ALL=C sort) <(awk '{print $2}' manifest/SHA256SUMS | LC_ALL=C sort)
+        (cd dist && sha256sum --check --strict ../manifest/SHA256SUMS)
+    - name: Check what PyPI already has for this version
+      id: pypi
+      # No files: upload all. Files present: allowed only when this is a re-run of this run and
+      # every file on PyPI is one of ours (same name and sha256) with provenance from this
+      # repository's release.yml; then the remaining files are uploaded with skip-existing.
+      run: |
+        python3 - <<'PY'
+        import json
+        import os
+        import urllib.error
+        import urllib.request
+
+        project = os.environ["PROJECT"]
+        version = os.environ["VERSION"]
+        # GitHub owner/repository names are case-insensitive.
+        repository = os.environ["REPO"].lower()
+        attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
+
+        manifest = {}
+        with open("manifest/SHA256SUMS", encoding="utf-8") as f:
+            for line in f:
+                sha256, name = line.split()
+                manifest[name] = sha256
+
+        def get_json(url):
+            try:
+                with urllib.request.urlopen(url, timeout=30) as response:
+                    return json.load(response)
+            except urllib.error.HTTPError as error:
+                if error.code == 404:
+                    return None
+                raise
+
+        release = get_json(f"https://pypi.org/pypi/{project}/{version}/json")
+        existing = {} if release is None else {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+        print(f"Files on PyPI for {project} {version}: {len(existing)}")
+
+        skip_existing = "false"
+        if existing:
+            if attempt <= 1:
+                raise SystemExit(f"::error::PyPI already has files for {version}, and this is not a re-run.")
+            for name, sha256 in sorted(existing.items()):
+                if manifest.get(name) != sha256:
+                    raise SystemExit(f"::error::{name} on PyPI is not in SHA256SUMS of this run or has another sha256.")
+                provenance = get_json(f"https://pypi.org/integrity/{project}/{version}/{name}/provenance")
+                publishers = [] if provenance is None else [
+                    bundle.get("publisher") or {} for bundle in provenance.get("attestation_bundles", [])
+                ]
+                if not any(
+                    p.get("kind") == "GitHub"
+                    and str(p.get("repository", "")).lower() == repository
+                    and p.get("workflow") == "release.yml"
+                    and p.get("environment") == "pypi"
+                    for p in publishers
+                ):
+                    raise SystemExit(f"::error::{name} on PyPI has no provenance from {repository} release.yml "
+                                     f"(environment pypi): {publishers}")
+                print(f"  {name}: same sha256 as SHA256SUMS, provenance from {repository} release.yml (environment pypi)")
+            skip_existing = "true"
+
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+            f.write(f"skip_existing={skip_existing}\n")
+        PY
+    - name: Create the tag at the released commit
+      # Absent: create it at github.sha. Present at github.sha on a re-run of this run: accept.
+      # Anything else: fail before anything is uploaded.
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        err="${RUNNER_TEMP}/gh-error.txt"
+        if ref=$(gh api "repos/${REPO}/git/ref/tags/${VERSION}" 2> "${err}"); then
+          tagged_sha=$(echo "${ref}" | jq -r .object.sha)
+          tagged_type=$(echo "${ref}" | jq -r .object.type)
+          if [ "${tagged_type}" = "commit" ] && [ "${tagged_sha}" = "${GITHUB_SHA}" ] && [ "${GITHUB_RUN_ATTEMPT}" -gt 1 ]; then
+            echo "Tag ${VERSION} already points at ${GITHUB_SHA} (created by an earlier attempt of this run)."
+            exit 0
+          fi
+          echo "::error::Tag ${VERSION} already exists (${tagged_type} ${tagged_sha}, run attempt ${GITHUB_RUN_ATTEMPT}). Nothing is uploaded."
+          exit 1
+        fi
+        if ! grep -q "HTTP 404" "${err}"; then
+          cat "${err}"
+          echo "::error::Could not read tag ${VERSION}."
+          exit 1
+        fi
+        gh api --method POST "repos/${REPO}/git/refs" -f "ref=refs/tags/${VERSION}" -f "sha=${GITHUB_SHA}" > /dev/null
+        tagged_sha=$(gh api "repos/${REPO}/git/ref/tags/${VERSION}" --jq .object.sha)
+        if [ "${tagged_sha}" != "${GITHUB_SHA}" ]; then
+          echo "::error::${VERSION} points at ${tagged_sha}, expected ${GITHUB_SHA}."
+          exit 1
+        fi
+        echo "Created tag ${VERSION} at ${GITHUB_SHA}."
+    - name: Upload to PyPI (Trusted Publishing)
+      uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+      with:
+        packages-dir: dist/
+        skip-existing: ${{ steps.pypi.outputs.skip_existing }}
+        print-hash: true
+    - name: Check that PyPI holds exactly these files
+      run: |
+        python3 - <<'PY'
+        import json
+        import os
+        import time
+        import urllib.error
+        import urllib.request
+
+        project = os.environ["PROJECT"]
+        version = os.environ["VERSION"]
+        manifest = {}
+        with open("manifest/SHA256SUMS", encoding="utf-8") as f:
+            for line in f:
+                sha256, name = line.split()
+                manifest[name] = sha256
+
+        on_pypi = {}
+        for attempt in range(1, 31):
+            try:
+                url = f"https://pypi.org/pypi/{project}/{version}/json"
+                with urllib.request.urlopen(url, timeout=30) as response:
+                    on_pypi = {f["filename"]: f["digests"]["sha256"] for f in json.load(response)["urls"]}
+            except urllib.error.URLError as error:
+                print(f"attempt {attempt}: {error}")
+            if on_pypi == manifest:
+                print(f"PyPI holds exactly the {len(manifest)} files of SHA256SUMS.")
+                break
+            print(f"attempt {attempt}: {len(on_pypi)} of {len(manifest)} files match so far, waiting")
+            time.sleep(20)
+        else:
+            missing = sorted(set(manifest) - set(on_pypi))
+            extra = sorted(set(on_pypi) - set(manifest))
+            differ = sorted(n for n in set(manifest) & set(on_pypi) if manifest[n] != on_pypi[n])
+            raise SystemExit(f"::error::PyPI differs from SHA256SUMS. missing={missing} extra={extra} sha256 differs={differ}")
+        PY
+
+  github-release:
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+    - name: Fetch the distribution files
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: release-dist
+        path: dist
+    - name: Fetch the manifest
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: release-manifest
+        path: manifest
+    - name: Check the files against the manifest
+      run: |
+        set -euo pipefail
+        diff <(ls -1 dist | LC_ALL=C sort) <(awk '{print $2}' manifest/SHA256SUMS | LC_ALL=C sort)
+        (cd dist && sha256sum --check --strict ../manifest/SHA256SUMS)
+    - name: Create the GitHub release, or complete it on a re-run
+      run: |
+        set -euo pipefail
+        err="${RUNNER_TEMP}/gh-error.txt"
+        if ! gh release view "${VERSION}" --repo "${REPO}" --json tagName > /dev/null 2> "${err}"; then
+          if ! grep -q "release not found" "${err}"; then
+            cat "${err}"
+            echo "::error::Could not read release ${VERSION}."
+            exit 1
+          fi
+          gh release create "${VERSION}" dist/* --repo "${REPO}" --verify-tag --generate-notes --title "${VERSION}"
+        else
+          assets=$(gh release view "${VERSION}" --repo "${REPO}" --json assets --jq '.assets[].name')
+          mkdir -p "${RUNNER_TEMP}/existing"
+          for file in dist/*; do
+            name=$(basename "${file}")
+            if echo "${assets}" | grep -qxF "${name}"; then
+              gh release download "${VERSION}" --repo "${REPO}" --pattern "${name}" --dir "${RUNNER_TEMP}/existing" --clobber
+              if [ "$(sha256sum < "${RUNNER_TEMP}/existing/${name}")" != "$(sha256sum < "${file}")" ]; then
+                echo "::error::Release asset ${name} differs from the released file."
+                exit 1
+              fi
+              echo "present: ${name}"
+            else
+              gh release upload "${VERSION}" "${file}" --repo "${REPO}"
+              echo "uploaded: ${name}"
+            fi
+          done
+        fi
+        echo "Released **${VERSION}** - https://pypi.org/project/${PROJECT}/${VERSION}/ and https://github.com/${REPO}/releases/tag/${VERSION}" >> "${GITHUB_STEP_SUMMARY}"

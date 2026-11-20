@@ -1,0 +1,20 @@
+# Weekly update checks for the GitHub Actions (pinned to commit SHAs with the version in a
+# comment) and for the Rust dependencies in Cargo.lock. Updates are grouped per ecosystem.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      cargo:
+        patterns:
+          - "*"

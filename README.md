@@ -9,13 +9,30 @@ GitHub: https://github.com/equinor/pyaga8
 `pyaga8` is a low-level Python interface to the AGA8 calculations. It exposes the underlying GERG-2008 and DETAIL state objects and methods directly, with Rust used for performance via `pyo3`.
 
 Higher-level libraries such as [`pvtlib`](https://pypi.org/project/pvtlib/) build on top of `pyaga8` to provide workflows such as PT, PH, PS and rhoT calculations:
-https://github.com/equinor/pvtlib/blob/main/examples/gas_properties_from_aga8.py
+https://github.com/equinor/pvtlib/tree/main/examples/01%20Gas%20Properties%20from%20AGA8
+
+Documentation: https://equinor.github.io/pyaga8/
+
+## Units
+
+`pyaga8` does no unit conversion. Inputs and outputs use the units of the Rust
+[`aga8`](https://docs.rs/aga8/0.6.1/aga8/) crate 0.6.1: temperature in K, pressure in kPa,
+molar concentration (`d`) in mol/l, molar mass in g/mol, internal energy, enthalpy and Gibbs
+energy in J/mol, entropy and heat capacities in J/(mol-K), speed of sound in m/s and
+Joule-Thomson coefficient in K/kPa. Compositions are mole fractions. The docstrings
+(`help(pyaga8.Gerg2008)`) list the unit of every property.
 
 ## Installation
 
 ```sh
 pip install pyaga8
 ```
+
+Wheels are published for CPython 3.10-3.14 on Linux x86_64 and aarch64 (manylinux2014),
+Windows x64 and macOS arm64. The installed version is `pyaga8.__version__`. Each release has a
+git tag and a [GitHub release](https://github.com/equinor/pyaga8/releases) with the same version,
+for example `0.2.0`; how releases are made is described in
+[docs/releasing.md](https://github.com/equinor/pyaga8/blob/main/docs/releasing.md).
 
 ## Minimal usage
 
