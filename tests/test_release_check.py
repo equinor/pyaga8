@@ -75,6 +75,7 @@ def test_any_version_is_higher_than_no_tags():
 
 
 def _run_main(monkeypatch, capsys, tmp_path, cargo_version, tags):
+    pytest.importorskip("tomllib", reason="reading Cargo.toml needs Python 3.11+")
     cargo_toml = tmp_path / "Cargo.toml"
     cargo_toml.write_text(f'[package]\nname = "pyaga8"\nversion = "{cargo_version}"\n', encoding="utf-8")
     monkeypatch.setattr(sys, "stdin", io.StringIO("\n".join(tags) + "\n"))
@@ -96,5 +97,6 @@ def test_main_fails_when_version_is_already_tagged(monkeypatch, capsys, tmp_path
 
 
 def test_repository_cargo_toml_version_is_major_minor_patch():
+    pytest.importorskip("tomllib", reason="reading Cargo.toml needs Python 3.11+")
     version = release_check.read_cargo_version(TOOL.parents[1] / "Cargo.toml")
     release_check.parse_version(version)

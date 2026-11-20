@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-import tomllib
 from pathlib import Path
 
 RELEASE_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
@@ -119,7 +118,13 @@ def check_release_version(cargo_version: str, tags: list[str]) -> str:
 
 
 def read_cargo_version(cargo_toml: Path) -> str:
-    """Return ``[package] version`` from a ``Cargo.toml`` file."""
+    """Return ``[package] version`` from a ``Cargo.toml`` file.
+
+    Needs Python 3.11 or later (``tomllib``); the release workflow runs it with 3.13. The import is
+    here so that the other functions, and their tests, also work on Python 3.10.
+    """
+    import tomllib
+
     with open(cargo_toml, "rb") as f:
         return tomllib.load(f)["package"]["version"]
 
