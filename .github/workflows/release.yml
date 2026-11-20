@@ -16,10 +16,11 @@
 #   3. build          - takes exactly those tested files, checks they carry the release version,
 #                       writes SHA256SUMS and stores the artifacts "release-dist" and
 #                       "release-manifest".
-#   4. tag            - environment "release" (approval): creates the lightweight tag at github.sha.
-#   5. publish        - environment "pypi" (approval): uploads the files to PyPI with Trusted
-#                       Publishing (OIDC, no token) and checks that PyPI holds exactly these files.
-#   6. github-release - creates the GitHub release with the same files attached.
+#   4. publish        - environment "pypi" (the only approval): checks the files against
+#                       SHA256SUMS and what PyPI already has, creates the lightweight tag at
+#                       github.sha, uploads the files to PyPI with Trusted Publishing (OIDC, no
+#                       token) and checks that PyPI holds exactly these files.
+#   5. github-release - creates the GitHub release with the same files attached.
 #
 # Recovery: use "Re-run failed jobs" on this run. Never start a new run for a version that already
 # has files on PyPI, and never move or delete a published tag.
@@ -140,50 +141,14 @@ jobs:
         retention-days: 90
         overwrite: true
 
-  tag:
+  publish:
     needs: [prepare, build]
     runs-on: ubuntu-latest
-    environment: release
+    environment: pypi
+    # contents: write to create the tag, id-token: write for Trusted Publishing. No checkout and no
+    # project code in this job: only artifacts, gh api and pypa/gh-action-pypi-publish.
     permissions:
       contents: write
-    env:
-      VERSION: ${{ needs.prepare.outputs.version }}
-      GH_TOKEN: ${{ github.token }}
-      REPO: ${{ github.repository }}
-    steps:
-    - name: Create the tag at the released commit
-      run: |
-        set -euo pipefail
-        err="${RUNNER_TEMP}/gh-error.txt"
-        if ref=$(gh api "repos/${REPO}/git/ref/tags/${VERSION}" 2> "${err}"); then
-          tagged_sha=$(echo "${ref}" | jq -r .object.sha)
-          tagged_type=$(echo "${ref}" | jq -r .object.type)
-          if [ "${tagged_type}" = "commit" ] && [ "${tagged_sha}" = "${GITHUB_SHA}" ] && [ "${GITHUB_RUN_ATTEMPT}" -gt 1 ]; then
-            echo "Tag ${VERSION} already points at ${GITHUB_SHA} (created by an earlier attempt of this run)."
-            exit 0
-          fi
-          echo "::error::Tag ${VERSION} already exists (${tagged_type} ${tagged_sha}, run attempt ${GITHUB_RUN_ATTEMPT}). Nothing is published."
-          exit 1
-        fi
-        if ! grep -q "HTTP 404" "${err}"; then
-          cat "${err}"
-          echo "::error::Could not read tag ${VERSION}."
-          exit 1
-        fi
-        gh api --method POST "repos/${REPO}/git/refs" -f "ref=refs/tags/${VERSION}" -f "sha=${GITHUB_SHA}" > /dev/null
-        tagged_sha=$(gh api "repos/${REPO}/git/ref/tags/${VERSION}" --jq .object.sha)
-        if [ "${tagged_sha}" != "${GITHUB_SHA}" ]; then
-          echo "::error::${VERSION} points at ${tagged_sha}, expected ${GITHUB_SHA}."
-          exit 1
-        fi
-        echo "Created tag ${VERSION} at ${GITHUB_SHA}."
-
-  publish:
-    needs: [prepare, build, tag]
-    runs-on: ubuntu-latest
-    environment: pypi
-    # Only the OIDC token for Trusted Publishing. No checkout, no project code in this job.
-    permissions:
       id-token: write
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -204,16 +169,6 @@ jobs:
         set -euo pipefail
         diff <(ls -1 dist | LC_ALL=C sort) <(awk '{print $2}' manifest/SHA256SUMS | LC_ALL=C sort)
         (cd dist && sha256sum --check --strict ../manifest/SHA256SUMS)
-    - name: Check the tag still points at the released commit
-      # Anonymous read of the public repository; this job has no contents permission.
-      run: |
-        set -euo pipefail
-        tagged=$(git ls-remote --tags "https://github.com/${REPO}.git" "refs/tags/${VERSION}" \
-          | awk -v ref="refs/tags/${VERSION}" '$2 == ref {print $1}')
-        if [ "${tagged}" != "${GITHUB_SHA}" ]; then
-          echo "::error::Tag ${VERSION} points at '${tagged}', expected ${GITHUB_SHA}."
-          exit 1
-        fi
     - name: Check what PyPI already has for this version
       id: pypi
       # No files: upload all. Files present: allowed only when this is a re-run of this run and
@@ -277,6 +232,36 @@ jobs:
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
             f.write(f"skip_existing={skip_existing}\n")
         PY
+    - name: Create the tag at the released commit
+      # Absent: create it at github.sha. Present at github.sha on a re-run of this run: accept.
+      # Anything else: fail before anything is uploaded.
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        err="${RUNNER_TEMP}/gh-error.txt"
+        if ref=$(gh api "repos/${REPO}/git/ref/tags/${VERSION}" 2> "${err}"); then
+          tagged_sha=$(echo "${ref}" | jq -r .object.sha)
+          tagged_type=$(echo "${ref}" | jq -r .object.type)
+          if [ "${tagged_type}" = "commit" ] && [ "${tagged_sha}" = "${GITHUB_SHA}" ] && [ "${GITHUB_RUN_ATTEMPT}" -gt 1 ]; then
+            echo "Tag ${VERSION} already points at ${GITHUB_SHA} (created by an earlier attempt of this run)."
+            exit 0
+          fi
+          echo "::error::Tag ${VERSION} already exists (${tagged_type} ${tagged_sha}, run attempt ${GITHUB_RUN_ATTEMPT}). Nothing is uploaded."
+          exit 1
+        fi
+        if ! grep -q "HTTP 404" "${err}"; then
+          cat "${err}"
+          echo "::error::Could not read tag ${VERSION}."
+          exit 1
+        fi
+        gh api --method POST "repos/${REPO}/git/refs" -f "ref=refs/tags/${VERSION}" -f "sha=${GITHUB_SHA}" > /dev/null
+        tagged_sha=$(gh api "repos/${REPO}/git/ref/tags/${VERSION}" --jq .object.sha)
+        if [ "${tagged_sha}" != "${GITHUB_SHA}" ]; then
+          echo "::error::${VERSION} points at ${tagged_sha}, expected ${GITHUB_SHA}."
+          exit 1
+        fi
+        echo "Created tag ${VERSION} at ${GITHUB_SHA}."
     - name: Upload to PyPI (Trusted Publishing)
       uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
       with:

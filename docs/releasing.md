@@ -27,8 +27,8 @@ Project rule: any change that changes a calculated result (for example a new ver
    `cargo update -p pyaga8 --offline` so that `Cargo.lock` records it (all builds use `--locked`
    and fail if `Cargo.lock` is out of date). Merge the pull request when the checks are green.
 2. Actions -> **Release** -> **Run workflow**, branch `main`. There are no inputs.
-3. Approve the deployment to the environment `release` (creates the tag).
-4. Approve the deployment to the environment `pypi` (uploads to PyPI).
+3. When the tests have passed, approve the deployment to the environment `pypi`. This is the
+   only approval; it creates the tag and uploads to PyPI.
 
 ## What the workflow does
 
@@ -47,24 +47,25 @@ All jobs work on the commit the run was started on.
 3. **build** - takes exactly those tested files, checks that their names carry the release
    version, runs `twine check --strict` again and writes `SHA256SUMS`. Artifacts `release-dist`
    and `release-manifest` (kept 90 days).
-4. **tag** - after approval in environment `release`: creates the lightweight tag `<version>` at
-   the released commit.
-5. **publish** - after approval in environment `pypi`: checks the files against `SHA256SUMS` and
-   that the tag still points at the released commit, uploads with
-   `pypa/gh-action-pypi-publish` (Trusted Publishing, with PyPI attestations), then waits until
-   PyPI lists exactly the files and SHA-256 hashes of `SHA256SUMS`. This job only has the
-   `id-token: write` permission and runs no project code.
-6. **github-release** - creates the GitHub release `<version>` with generated notes and the same
+4. **publish** - after approval in environment `pypi`, in this order: checks that the file names
+   equal the entries of `SHA256SUMS` exactly and that every hash matches; checks what PyPI already
+   has for the version (see below); creates the lightweight tag `<version>` at the released commit
+   (a tag that already exists is accepted only on a re-run and only if it points at the released
+   commit); uploads with `pypa/gh-action-pypi-publish` (Trusted Publishing, with PyPI
+   attestations); then waits until PyPI lists exactly the files and SHA-256 hashes of
+   `SHA256SUMS`. This job has only the permissions `contents: write` (for the tag) and
+   `id-token: write` (for PyPI), and runs no project code (no checkout).
+5. **github-release** - creates the GitHub release `<version>` with generated notes and the same
    21 files attached.
 
 ## When something fails
 
-- Before the tag job: nothing has been published. Fix the cause in a pull request and start a new
-  run.
-- From the tag job on: use **Re-run failed jobs** on the same run, nothing else. A re-run accepts
+- Before the publish job: nothing has been tagged or published. Fix the cause in a pull request
+  and start a new run.
+- From the publish job on: use **Re-run failed jobs** on the same run, nothing else. A re-run accepts
   the tag only if it points at the released commit, and accepts files already on PyPI only if each
   one is in `SHA256SUMS` of this run with the same hash and has a PyPI provenance from this
-  repository's `release.yml`; the missing files are then uploaded.
+  repository's `release.yml` and environment `pypi`; the missing files are then uploaded.
 - Never start a new run for a version that already has files on PyPI. A file name that has been
   uploaded to PyPI once can never be uploaded again, even after it is deleted, and a new run
   builds files with other hashes. Release the next PATCH version instead.
@@ -72,8 +73,8 @@ All jobs work on the commit the run was started on.
 
 ## One-time setup (repository owner)
 
-- Settings -> Environments: environments `release` and `pypi`, each with a required reviewer and
-  deployment branches limited to `main`.
+- Settings -> Environments: environment `pypi` with required reviewer `chagenvik` and deployment
+  branches limited to `main`.
 - pypi.org -> pyaga8 -> Manage -> Publishing: a GitHub trusted publisher with owner `equinor`,
   repository `pyaga8`, workflow `release.yml`, environment `pypi`.
-- A tag ruleset on `refs/tags/[0-9]*` that blocks update and deletion of release tags.
+- Optional: a tag ruleset on `refs/tags/[0-9]*` that blocks update and deletion of release tags.
